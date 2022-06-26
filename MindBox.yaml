@@ -1,0 +1,137 @@
+# MindBox
+# Не ожидаем production-ready решения. 
+# Сделайте, как кажется правильным, опишите процесс поиска и принятые решения.
+# Опишите deployment для веб-приложения в kubernetes в виде yaml-манифеста. 
+# Оставляйте в коде комментарии по принятым решениям.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: MindBox
+  labels:
+    app: MindBox
+spec:
+  selector:
+    matchLabels:
+      app: nginx
+  replicas: 4
+  strategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        MindBox: MindBox
+        app: MindBox
+      annotations:
+        scale-down-enabled: 'true'
+    spec:
+      containers:
+        - name: MindBox
+          image: nginx
+          ports:
+            - containerPort: 80
+          livenessProbe:
+            # приложение требует около 5-10 секунд для инициализации => добавим задержку, кратную 5 сек
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              # По памяти всегда “ровно” в районе 128M memory
+              memory: 128Mi
+              # в дальнейшем потребление ровное в районе 0.1 CPU
+              cpu: 100m
+            limits:
+              memory: 150Mi
+              # на первые запросы приложению требуется значительно больше ресурсов CPU
+              cpu: '1'
+      affinity:
+        # максимально отказоустойчивый deployment => раздельное существование подов podAntiAffinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - MindBox
+                #  Мультизонный кластер, доступность разнесена по разным датацентрам
+                topologyKey: failure-domain.beta.kubernetes.io/region=us-east-1
+
+
+
+
+# приложение имеет дневной цикл по нагрузке => Для минимального потребления ресурсов необходимо создать HorizontalPodAutoscaler
+piVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nodejs-app-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nodejs
+  # – ночью запросов на порядки меньше, значит будет минимальное количество pods (minReplicas=1) - (1 - это минимум)
+  minReplicas: 1
+  # пик – днём, значит будет максимальное количество pods (maxReplicas=4) - ('4 пода справляются с пиковой нагрузкой')
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: AverageValue
+          averageValue: 128Mi
+
+# Для минимального потребления ресурсов необходимо также создать расписание => Cronjob
+# cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rules_day
+spec:
+  # расписание на день включается в 9 утра
+  schedule: "0 9 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: rules_day
+            image: busybox:1.28
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -c
+            # пик – днём, значит будет максимальное количество pods (maxReplicas=4) - ('4 пода справляются с пиковой нагрузкой')
+            - kubectl scale --replicas=4 deployment/nodejs
+          restartPolicy: OnFailure
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rules_night
+spec:
+  # расписание на ночь включается в 21 час
+  schedule: "0 21 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: rules_night
+            image: busybox:1.28
+            imagePullPolicy: IfNotPresent
+            command:
+            - /bin/sh
+            - -c
+            # – ночью запросов на порядки меньше, значит будет минимальное количество pods (minReplicas=1) - (1 - это минимум)
+            - kubectl scale --replicas=1 deployment/nodejs
+          restartPolicy: OnFailure
