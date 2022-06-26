@@ -66,12 +66,12 @@ spec:
 piVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: nodejs-app-hpa
+  name: MindBox_app_hpa
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: nodejs
+    name: MindBox
   # – ночью запросов на порядки меньше, значит будет минимальное количество pods (minReplicas=1) - (1 - это минимум)
   minReplicas: 1
   # пик – днём, значит будет максимальное количество pods (maxReplicas=4) - ('4 пода справляются с пиковой нагрузкой')
@@ -111,7 +111,7 @@ spec:
             - /bin/sh
             - -c
             # пик – днём, значит будет максимальное количество pods (maxReplicas=4) - ('4 пода справляются с пиковой нагрузкой')
-            - kubectl scale --replicas=4 deployment/nodejs
+            - kubectl scale --replicas=4 deployment/MindBox
           restartPolicy: OnFailure
 
 apiVersion: batch/v1
@@ -133,5 +133,5 @@ spec:
             - /bin/sh
             - -c
             # – ночью запросов на порядки меньше, значит будет минимальное количество pods (minReplicas=1) - (1 - это минимум)
-            - kubectl scale --replicas=1 deployment/nodejs
+            - kubectl scale --replicas=1 deployment/MindBox
           restartPolicy: OnFailure
